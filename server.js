@@ -162,28 +162,68 @@ app.post('/api/gallery/upload', upload.single('art'), (req, res) => {
     const createdAt = new Date().toISOString();
 
     // Handle file upload
-    if (req.file) {
+    // if (req.file) {
+    //   console.log('Processing file upload...');
+    //   console.log('File data:', {
+    //     filename: req.file.filename,
+    //     path: req.file.path,
+    //     title,
+    //     description
+    //   });
+      
+    //   db.run('INSERT INTO gallery (userId, type, filename, path, title, description, createdAt) VALUES (?, ?, ?, ?, ?, ?, ?)',
+    //     [user.id, 'file', req.file.filename, req.file.path, title || 'Untitled', description || '', createdAt], 
+    //     function(err) {
+    //       if (err) {
+    //         console.error('Database INSERT error:', err);
+    //         return res.status(500).json({ status: 'error', message: 'Database insert failed' });
+    //       }
+          
+    //       console.log('Insert successful, ID:', this.lastID);
+    //       res.json({ status: 'ok', message: 'File uploaded' });
+    //     });
+    //   return;
+    // }
+     if (req.file) {
       console.log('Processing file upload...');
+      
+      // ✅ FIXED: Store relative path instead of full server path
+      const relativePath = `/uploads/${req.file.filename}`;
+      
       console.log('File data:', {
         filename: req.file.filename,
-        path: req.file.path,
-        title,
-        description
+        relativePath: relativePath,
+        title: title || 'Untitled',
+        description: description || ''
       });
       
-      db.run('INSERT INTO gallery (userId, type, filename, path, title, description, createdAt) VALUES (?, ?, ?, ?, ?, ?, ?)',
-        [user.id, 'file', req.file.filename, req.file.path, title || 'Untitled', description || '', createdAt], 
+      db.run(
+        'INSERT INTO gallery (userId, type, filename, path, title, description, createdAt) VALUES (?, ?, ?, ?, ?, ?, ?)',
+        [user.id, 'file', req.file.filename, relativePath, title || 'Untitled', description || '', createdAt], 
         function(err) {
           if (err) {
             console.error('Database INSERT error:', err);
-            return res.status(500).json({ status: 'error', message: 'Database insert failed' });
+            return res.status(500).json({ status: 'error', message: 'Database insert failed', error: err.message });
           }
           
           console.log('Insert successful, ID:', this.lastID);
-          res.json({ status: 'ok', message: 'File uploaded' });
-        });
+          res.json({ 
+            status: 'ok', 
+            message: 'File uploaded successfully',
+            art: {
+              id: this.lastID,
+              type: 'file',
+              filename: req.file.filename,
+              path: relativePath,
+              title: title || 'Untitled',
+              description: description || ''
+            }
+          });
+        }
+      );
       return;
     }
+
 
     // Handle URL upload
     if (url) {
