@@ -1,0 +1,365 @@
+const express = require('express');
+const cors = require('cors');
+const bcrypt = require('bcryptjs');
+const multer = require('multer');
+const sqlite3 = require('sqlite3').verbose();
+
+const app = express();
+const PORT = process.env.PORT || 3000;
+
+// Initialize SQLite database
+const db = new sqlite3.Database('./users.db', (err) => {
+  if (err) {
+    console.error('Error opening database:', err);
+  } else {
+    console.log('Connected to SQLite database');
+  }
+});
+
+// Create tables if they don't exist
+db.serialize(() => {
+  // Users table
+  db.run(`CREATE TABLE IF NOT EXISTS users (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    email TEXT UNIQUE NOT NULL,
+    password TEXT NOT NULL,
+    createdAt TEXT NOT NULL
+  )`);
+
+  // Gallery table - NOW WITH BLOB FOR IMAGE DATA
+  db.run(`CREATE TABLE IF NOT EXISTS gallery (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    userId TEXT NOT NULL,
+    type TEXT NOT NULL,
+    filename TEXT,
+    imageData BLOB,
+    mimeType TEXT,
+    url TEXT,
+    title TEXT,
+    description TEXT,
+    createdAt TEXT NOT NULL,
+    FOREIGN KEY (userId) REFERENCES users (id)
+  )`);
+});
+
+// Middleware
+app.use(cors());
+app.use(express.json());
+
+// Multer setup for file uploads (store in memory, not disk)
+const storage = multer.memoryStorage(); // ✅ Store in memory instead of disk
+const upload = multer({ storage });
+
+// Test route
+app.get('/', (req, res) => res.send('Server running with SQLite + BLOB storage'));
+
+// Register
+app.post('/api/register', async (req, res) => {
+  try {
+    const { name, email, password } = req.body;
+    if (!name || !email || !password) {
+      return res.status(400).json({ error: 'Name, email, and password required' });
+    }
+
+    db.get('SELECT email FROM users WHERE email = ?', [email], async (err, row) => {
+      if (err) {
+        console.error(err);
+        return res.status(500).json({ error: 'Server error' });
+      }
+      
+      if (row) {
+        return res.status(400).json({ error: 'User already exists' });
+      }
+
+      const hashed = await bcrypt.hash(password, 10);
+      const userId = Date.now().toString();
+      const createdAt = new Date().toISOString();
+
+      db.run('INSERT INTO users (id, name, email, password, createdAt) VALUES (?, ?, ?, ?, ?)',
+        [userId, name, email, hashed, createdAt], function(err) {
+          if (err) {
+            console.error(err);
+            return res.status(500).json({ error: 'Server error' });
+          }
+          
+          res.status(201).json({
+            message: 'User registered',
+            user: { id: userId, name, email, createdAt }
+          });
+        });
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// Login
+app.post('/api/login', async (req, res) => {
+  const { email, password } = req.body;
+  
+  db.get('SELECT * FROM users WHERE email = ?', [email], async (err, user) => {
+    if (err) {
+      console.error(err);
+      return res.status(500).json({ status: 'error', message: 'Server error' });
+    }
+    
+    if (!user) {
+      return res.status(401).json({ status: 'error', message: 'Invalid credentials' });
+    }
+
+    const valid = await bcrypt.compare(password, user.password);
+    if (!valid) {
+      return res.status(401).json({ status: 'error', message: 'Invalid credentials' });
+    }
+
+    const { password: _, ...userSafe } = user;
+    res.json({ status: 'ok', user: userSafe });
+  });
+});
+
+// ✅ NEW: Upload gallery art (stores image data in database as BLOB)
+app.post('/api/gallery/upload', upload.single('art'), (req, res) => {
+  console.log('=== UPLOAD DEBUG ===');
+  console.log('req.body:', req.body);
+  console.log('req.file:', req.file);
+  
+  const { email, url, title, description } = req.body;
+  
+  if (!email) {
+    return res.status(400).json({ status: 'error', message: 'Email is required' });
+  }
+  
+  // First get the user
+  db.get('SELECT id FROM users WHERE email = ?', [email], (err, user) => {
+    if (err) {
+      console.error('User lookup error:', err);
+      return res.status(500).json({ status: 'error', message: 'User lookup error' });
+    }
+    
+    if (!user) {
+      console.log('User not found for email:', email);
+      return res.status(404).json({ status: 'error', message: 'User not found' });
+    }
+
+    console.log('Found user ID:', user.id);
+    const createdAt = new Date().toISOString();
+
+    // Handle file upload - STORE AS BLOB
+    if (req.file) {
+      console.log('Processing file upload...');
+      
+      // ✅ Store the binary data directly in database
+      const imageData = req.file.buffer; // Binary data
+      const mimeType = req.file.mimetype; // e.g., 'image/jpeg', 'image/png'
+      const filename = req.file.originalname;
+      
+      console.log('File data:', {
+        filename: filename,
+        mimeType: mimeType,
+        size: imageData.length,
+        title: title || 'Untitled',
+        description: description || ''
+      });
+      
+      db.run(
+        'INSERT INTO gallery (userId, type, filename, imageData, mimeType, title, description, createdAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+        [user.id, 'file', filename, imageData, mimeType, title || 'Untitled', description || '', createdAt], 
+        function(err) {
+          if (err) {
+            console.error('Database INSERT error:', err);
+            return res.status(500).json({ status: 'error', message: 'Database insert failed', error: err.message });
+          }
+          
+          console.log('Insert successful, ID:', this.lastID);
+          res.json({ 
+            status: 'ok', 
+            message: 'File uploaded successfully',
+            art: {
+              id: this.lastID,
+              type: 'file',
+              filename: filename,
+              mimeType: mimeType,
+              title: title || 'Untitled',
+              description: description || ''
+            }
+          });
+        }
+      );
+      return;
+    }
+
+    // Handle URL upload
+    if (url) {
+      console.log('Processing URL upload...');
+      
+      db.run(
+        'INSERT INTO gallery (userId, type, url, title, description, createdAt) VALUES (?, ?, ?, ?, ?, ?)',
+        [user.id, 'url', url, title || 'Untitled', description || '', createdAt], 
+        function(err) {
+          if (err) {
+            console.error('Database INSERT error:', err);
+            return res.status(500).json({ status: 'error', message: 'Database insert failed', error: err.message });
+          }
+          
+          console.log('Insert successful, ID:', this.lastID);
+          res.json({ 
+            status: 'ok', 
+            message: 'URL added successfully', 
+            art: { 
+              id: this.lastID, 
+              type: 'url', 
+              url,
+              title: title || 'Untitled',
+              description: description || ''
+            } 
+          });
+        }
+      );
+      return;
+    }
+
+    console.log('No file or URL found in request');
+    res.status(400).json({ status: 'error', message: 'No file or URL provided' });
+  });
+});
+
+// ✅ NEW: Serve individual image from database
+app.get('/api/gallery/image/:id', (req, res) => {
+  const { id } = req.params;
+  
+  db.get('SELECT imageData, mimeType, filename FROM gallery WHERE id = ? AND type = ?', 
+    [id, 'file'], (err, row) => {
+      if (err) {
+        console.error(err);
+        return res.status(500).json({ status: 'error', message: 'Server error' });
+      }
+      
+      if (!row || !row.imageData) {
+        return res.status(404).json({ status: 'error', message: 'Image not found' });
+      }
+      
+      // Set proper content type and send binary data
+      res.setHeader('Content-Type', row.mimeType);
+      res.setHeader('Content-Disposition', `inline; filename="${row.filename}"`);
+      res.send(row.imageData);
+    });
+});
+
+// Get all uploads from all users
+app.get('/api/gallery/all', (req, res) => {
+  const query = `
+    SELECT 
+      g.id,
+      g.userId,
+      g.type,
+      g.filename,
+      g.mimeType,
+      g.url,
+      g.title,
+      g.description,
+      g.createdAt,
+      u.name as userName,
+      u.email as userEmail
+    FROM gallery g
+    JOIN users u ON g.userId = u.id
+    ORDER BY g.createdAt DESC
+  `;
+  
+  db.all(query, [], (err, rows) => {
+    if (err) {
+      console.error(err);
+      return res.status(500).json({ status: 'error', message: 'Server error' });
+    }
+    
+    // For file uploads, add the image URL endpoint
+    const uploads = rows.map(row => ({
+      ...row,
+      imageUrl: row.type === 'file' ? `/api/gallery/image/${row.id}` : row.url
+    }));
+    
+    res.json({ status: 'ok', uploads, count: uploads.length });
+  });
+});
+
+// Get user gallery
+app.get('/api/gallery/:email', (req, res) => {
+  const query = `
+    SELECT 
+      g.id,
+      g.type,
+      g.filename,
+      g.mimeType,
+      g.url,
+      g.title,
+      g.description,
+      g.createdAt
+    FROM gallery g
+    JOIN users u ON g.userId = u.id
+    WHERE u.email = ?
+    ORDER BY g.createdAt DESC
+  `;
+  
+  db.all(query, [req.params.email], (err, rows) => {
+    if (err) {
+      console.error(err);
+      return res.status(500).json({ status: 'error', message: 'Server error' });
+    }
+    
+    if (rows.length === 0) {
+      db.get('SELECT email FROM users WHERE email = ?', [req.params.email], (err, user) => {
+        if (err) {
+          console.error(err);
+          return res.status(500).json({ status: 'error', message: 'Server error' });
+        }
+        
+        if (!user) {
+          return res.status(404).json({ status: 'error', message: 'User not found' });
+        }
+        
+        res.json({ status: 'ok', gallery: [] });
+      });
+      return;
+    }
+    
+    // Add image URL for file uploads
+    const gallery = rows.map(row => ({
+      ...row,
+      imageUrl: row.type === 'file' ? `/api/gallery/image/${row.id}` : row.url
+    }));
+    
+    res.json({ status: 'ok', gallery });
+  });
+});
+
+// Get all users (for testing)
+app.get('/api/users', (req, res) => {
+  db.all('SELECT id, name, email, createdAt FROM users', [], (err, rows) => {
+    if (err) {
+      console.error(err);
+      return res.status(500).json({ error: 'Server error' });
+    }
+    
+    res.json({ users: rows });
+  });
+});
+
+// Graceful shutdown
+process.on('SIGINT', () => {
+  console.log('Closing database connection...');
+  db.close((err) => {
+    if (err) {
+      console.error('Error closing database:', err);
+    } else {
+      console.log('Database connection closed');
+    }
+    process.exit(0);
+  });
+});
+
+// Export for Vercel
+module.exports = app;
+
+// Start server
+app.listen(PORT, () => console.log(`Server running on http://localhost:${PORT}`));

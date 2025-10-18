@@ -1,11 +1,9 @@
 {
   "name": "backend",
   "version": "1.0.0",
-   "engines": {
-        "node": ">=20.0.0" 
-      },
-    
-    
+  "engines": {
+    "node": ">=20.0.0"
+  },
   "description": "",
   "main": "server.js",
   "scripts": {
@@ -25,10 +23,15 @@
   },
   "homepage": "https://github.com/RyanSWest/BackendIO#readme",
   "dependencies": {
+    "@paypal/checkout-server-sdk": "^1.0.3",
+    "@solana/spl-token": "^0.4.14",
+    "@solana/web3.js": "^1.98.4",
     "bcryptjs": "^3.0.2",
     "cors": "^2.8.5",
+    "dotenv": "^17.2.3",
     "express": "^5.1.0",
     "multer": "^2.0.2",
-    "sqlite3": "^5.1.7"
+    "sqlite3": "^5.1.7",
+    "stripe": "^19.1.0"
   }
 }
