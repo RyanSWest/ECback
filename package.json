@@ -4,7 +4,6 @@
   "engines": {
     "node": ">=20.0.0"
   },
-  "description": "",
   "main": "server.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
@@ -24,14 +23,24 @@
   "homepage": "https://github.com/RyanSWest/BackendIO#readme",
   "dependencies": {
     "@paypal/checkout-server-sdk": "^1.0.3",
+    "@solana-program/system": "^0.9.0",
+    "@solana/kit": "^4.0.0",
     "@solana/spl-token": "^0.4.14",
     "@solana/web3.js": "^1.98.4",
     "bcryptjs": "^3.0.2",
+    "bip39": "^3.1.0",
+    "bs58": "^6.0.0",
     "cors": "^2.8.5",
     "dotenv": "^17.2.3",
+    "ed25519-hd-key": "^1.3.0",
     "express": "^5.1.0",
     "multer": "^2.0.2",
-    "sqlite3": "^5.1.7",
+    "sqlite3": "^5.1.6",
     "stripe": "^19.1.0"
+  },
+  "devDependencies": {
+    "autoprefixer": "^10.4.21",
+    "postcss": "^8.5.6",
+    "tailwindcss": "^4.1.16"
   }
 }
